@@ -73,7 +73,7 @@ cleanup() {
  exit 1
 }
 
-trap "cleanup" EXIT HUP INT QUIT KILL TERM
+trap "cleanup" EXIT HUP INT QUIT TERM
 
 echo -e "\033[1;37m---> Enabling filesystem ownership on ${label}\033[0m"
 
