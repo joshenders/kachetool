@@ -1,0 +1,20 @@
+Most scripts and programs similar to this set 755 recursively when setting 
+permissions on kexts. I believe this to be an oversight. kextcache 
+/does not/ need or expect 755 and recursively setting this is wrong as there
+is no inherent reason that plists and *all* other coincidental files need to
+be world executable by default.
+
+While there's no functional harm in setting 755 recursively and in fact may 
+actually help some users who are confused by poorly-packaged kexts and 
+strange permission-related kextcache and runtime errors; the best practice
+is to avoid it all together because it exposes an unnecessary attack surface.
+
+If we really wanted to nanny, we could iterate through each opaque kext
+folder and set permissions based on filetype magic. However, if you're
+putting your faith in a third party kernel developer, you should probably
+also trust their ability to know how to package their releases correctly.
+ 
+To put it bluntly, if you're blindly installing an unverified kext from a
+third party to get wifi on your, 'LOL HACKINTOSH NETBOOK' working, this
+program is probably not for you.
+

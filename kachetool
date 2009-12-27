@@ -1,0 +1,164 @@
+#!/bin/bash
+# 
+# kachetool - "The proper way to update kexts! (tm)"
+# by <josh.enders@gmail.com>
+#
+# Most scripts and programs similar to this set 755 recursively when setting 
+# permissions on kexts. I believe this to be an oversight. kextcache 
+# /does not/ need or expect 755 and recursively setting this is wrong as there
+# is no inherent reason that plists and *all* other coincidental files need to
+# be world executable by default.
+#
+# While there's no functional harm in setting 755 recursively and in fact may 
+# actually help some users who are confused by poorly-packaged kexts and 
+# strange permission-related kextcache and runtime errors; the best practice
+# is to avoid it all together because it exposes an unnecessary attack surface.
+# 
+# If we really wanted to nanny, we could iterate through each opaque kext
+# folder and set permissions based on filetype magic. However, if you're
+# putting your faith in a third party kernel developer, you should probably
+# also trust their ability to know how to package their releases correctly.
+# 
+# To put it bluntly, if you're blindly installing an unverified kext from a
+# third party to get wifi on your, 'LOL HACKINTOSH NETBOOK' working, this
+# program is probably not for you.
+
+printUsage() { echo "usage: $(basename ${0}) [-v] \"name of drive\""; exit 1; } >&2
+
+if [[ ${EUID} -ne 0 ]]; then
+  echo "You must be root for this command" >&2
+  exit 1
+elif [[ $# -lt 1 ]]; then
+  printUsage
+else
+  while getopts ":v" option; do
+    case "${option}" in
+      v) 
+        verbose=1
+        echo -e "\033[1;37m---> Verbose output enabled\033[0m"
+        ;;
+      ?)
+        printUsage
+        ;;
+    esac
+  done
+fi
+
+shift $((${OPTIND} - 1))
+
+if [[ -e "/Volumes/${1}" ]]; then
+  label="${1}"
+  extra="/Volumes/${label}/Extra"
+else
+  echo "\"${1}\" is not mounted" >&2
+  exit 1
+fi
+
+checkOwner() {
+  if [[ $(stat -f %Su:%Sg "${1}") != "root:wheel" ]]; then
+    if [[ ! ${verbose} ]]; then
+      chown root:wheel "${1}" >/dev/null 2>&1 || exit 1
+    else
+      chown -vv root:wheel "${1}" || exit 1
+    fi
+  fi 
+  # kextcache sets 644 on Extensions.mkext by default
+}
+
+cleanup() {
+ if [[ ! -e "${extra}/Extensions.mkext" && -e "${extra}/Extensions.mkext.previous" ]]; then
+   mv "${extra}/Extensions.mkext.previous" "${extra}/Extensions.mkext"
+ fi
+ diskutil disableOwnership "${label}" >/dev/null 2>&1
+ exit 1
+}
+
+trap "cleanup" EXIT HUP INT QUIT KILL TERM
+
+echo -e "\033[1;37m---> Enabling filesystem ownership on ${label}\033[0m"
+
+if [[ ! ${verbose} ]]; then
+  diskutil enableOwnership "${label}" >/dev/null 2>&1
+  if [[ $? -gt 0 ]]; then
+    echo -e "\n\033[1;37m"'[!]'" Unable to enable filesystem ownership on \"${label}\"\033[0m" >&2
+    exit 1
+  fi
+else
+  diskutil enableOwnership "${label}"
+  if [[ $? -gt 0 ]]; then
+    echo -e "\n\033[1;37m"'[!]'" Unable to enable filesystem ownership on \"${label}\"\033[0m" >&2
+    exit 1
+  fi
+fi
+
+echo -e "\033[1;37m---> Verifying /Extra kernel extension cache\033[0m"                                                    
+
+if [[ ! ${verbose} ]]; then
+  chown -R root:wheel "${extra}/Extensions" >/dev/null 2>&1
+  if [[ $? -gt 0 ]]; then
+    echo -e "\n\033[1;37m"'[!] '"Unable to modify ownership of \"${extra}/Extensions\"\033[0m" >&2
+    exit 1
+  fi
+  chmod -R go-w "${extra}/Extensions" >/dev/null 2>&1
+  if [[ $? -gt 0 ]]; then
+    echo -e "\n\033[1;37m"'[!] '"Unable to modify permissions of \"${extra}/Extensions\"\033[0m" >&2
+    exit 1
+  fi
+  xattr -dr com.apple.quarantine "${extra}/Extensions" >/dev/null 2>&1
+  if [[ $? -gt 0 ]]; then
+    echo -e "\n\033[1;37m"'[!] '"Unable to remove extended attributes from \"${extra}/Extensions\"\033[0m" >&2
+    exit 1
+  fi
+else
+  chown -Rv root:wheel "${extra}/Extensions"
+  if [[ $? -gt 0 ]]; then
+    echo -e "\n\033[1;37m"'[!] '"Unable to modify ownership of \"${extra}/Extensions\"\033[0m" >&2
+    exit 1
+  fi
+  chmod -Rvv go-w "${extra}/Extensions"
+  if [[ $? -gt 0 ]]; then
+    echo -e "\n\033[1;37m"'[!] '"Unable to modify permissions of \"${extra}/Extensions\"\033[0m" >&2
+    exit 1
+  fi
+  xattr -dr com.apple.quarantine "${extra}/Extensions"
+  if [[ $? -gt 0 ]]; then
+    echo -e "\n\033[1;37m"'[!] '"Unable to remove extended attributes from \"${extra}/Extensions\"\033[0m" >&2
+    exit 1
+  fi
+fi
+
+echo -e "\033[1;37m---> Updating /Extra kernel extension cache\033[0m"                                                    
+
+if [[ ! ${verbose} ]]; then
+  [[ -e "${extra}/Extensions.mkext" ]] && mv "${extra}/Extensions.mkext" "${extra}/Extensions.mkext.previous" >/dev/null 2>&1
+  { kextcache -q -a i386 -a x86_64 -m "${extra}/Extensions.mkext" "${extra}/Extensions" >/dev/null 2>&1 && checkOwner "${extra}/Extensions.mkext"; }
+  if [[ $? -gt 0 ]]; then
+    echo -e "\n\033[1;37m"'[!] '"Unable to generate \"${extra}/Extensions.mkext\"\033[0m" >&2
+    exit 1
+  fi
+else
+  [[ -e "${extra}/Extensions.mkext" ]] && mv -v "${extra}/Extensions.mkext" "${extra}/Extensions.mkext.previous"
+  { kextcache -v 4 -a i386 -a x86_64 -m "${extra}/Extensions.mkext" "${extra}/Extensions" && checkOwner "${extra}/Extensions.mkext"; }
+  if [[ $? -gt 0 ]]; then
+    echo -e "\n\033[1;37m"'[!] '"Unable to generate \"${extra}/Extensions.mkext\"\033[0m" >&2
+    exit 1
+  fi
+fi
+
+echo -e "\033[1;37m---> Disabling filesystem ownership on \"${label}\"\033[0m"
+
+if [[ ! ${verbose} ]]; then
+  diskutil disableOwnership "${label}" >/dev/null 2>&1
+  if [[ $? -gt 0 ]]; then
+    echo -e "\n\033[1:37m"'[!]'" Unable to disable filesystem ownership on \"${label}\"\033[0m" >&2
+    exit 1
+  fi
+else
+  diskutil disableOwnership "${label}"
+  if [[ $? -gt 0 ]]; then
+    echo -e "\n\033[1:37m"'[!]'" Unable to disable filesystem ownership on \"${label}\"\033[0m" >&2
+    exit 1
+  fi
+fi
+
+echo -e "\033[1;37m---> Finished\033[0m"
